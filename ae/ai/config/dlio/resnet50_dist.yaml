@@ -1,0 +1,62 @@
+# ============================================================
+# ResNet-50 Distributed Training: Pre-sharded Sequential Access
+# ============================================================
+#
+# Real workload reference:
+#   - MLPerf Training v3.0 ResNet-50 benchmark (ImageNet-1k)
+#   - "Characterizing Deep Learning I/O Workloads in Leadership-Class
+#     Storage Systems", Chowdhury et al., IPDPS'21
+#
+# Data layout:
+#   Each sample is a JPEG image ~150 KB (mean), stored back-to-back in
+#   indexed_binary format.  Variable JPEG sizes are captured in the
+#   .sz.idx index file exactly as DLIO's IndexedBinaryGenerator writes them.
+#
+# Access pattern: distributed pre-sharded sequential:
+#   The dataset is partitioned into N_ranks shards before training.  Each
+#   rank reads its shard sequentially for the full epoch.  The shard
+#   permutation is randomised once between epochs using a global seed.
+#   This matches the pattern used in large-scale ResNet-50 training on
+#   Cerebras, Summit, and LUMI where each storage client owns a disjoint
+#   subset of files and streams them sequentially.
+#
+#   Consequence: each training step reads batch_size × ~160 KB ≈ 20 MB of
+#   back-to-back samples from the same file.  SCISSOR: 1 to 2 IOPs.
+#   pread: 128 individual reads.  Expected speedup: 50 to 100×.
+#
+# Note on record_length_bytes:
+#   We use a fixed 163 840 B (160 KB) representative sample for data
+#   generation.  Real JPEG sizes vary (50 to 500 KB), and the index files capture
+#   that variation when using real data.  The fixed size ensures reproducible
+#   IO patterns for the benchmark.
+#
+model:
+  name: resnet50_dist
+
+dataset:
+  data_folder: data/dlio/resnet50_dist
+  format: indexed_binary
+  num_files_train: 16
+  num_samples_per_file: 512
+  # Representative JPEG size (mean for ImageNet training split: ~150 KB)
+  # record_dims gives DLIO exact 1-D shape → 163840 B/sample
+  # (record_length_bytes would be sqrt-truncated to 404²=163216 B)
+  record_dims: [163840]
+
+reader:
+  batch_size: 128
+  # Sequential within shard, no per-step shuffle.
+  # Global shard assignment is shuffled between epochs.
+  sample_shuffle: off
+  file_shuffle: off
+
+train:
+  epochs: 1
+  # ResNet-50 A100 step time at batch=128 (MLPerf reference: ~94 ms)
+  computation_time: 0.094
+
+benchmark:
+  queue_depth: 128
+  o_direct: true
+  n_runs: 3
+  report_prefix: "results/dlio/resnet50_dist"

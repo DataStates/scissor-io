@@ -1,0 +1,25 @@
+@PACKAGE_INIT@
+
+# ======================================================
+# scissorConfig.cmake.in
+#
+# Recreates scissor's link dependencies so downstream
+# consumers get a complete dependency graph with a single
+#   find_package(scissor)
+# call.  When scissor was built against a system liburing,
+# it is located again through pkg-config. Otherwise, the
+# static liburing installed alongside scissor is used.
+# ======================================================
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(Threads)
+
+if(@SCISSOR_LIBURING_FROM_SYSTEM@)
+    find_dependency(PkgConfig)
+    pkg_check_modules(PC_liburing REQUIRED IMPORTED_TARGET "liburing>=2.6")
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/scissorTargets.cmake")
+
+check_required_components(scissor)

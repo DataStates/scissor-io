@@ -1,0 +1,37 @@
+# ============================================================
+# U-Net 3D / Cosmoflow scientific workload configuration
+# ============================================================
+workload:
+  name: unet3d
+  description: "3D medical imaging / scientific HDF5-style workload"
+
+dataset:
+  n_files: 4
+  file_size_gb: 8
+  sample_size_kb: 512          # 3D volumetric chunk
+  sample_size_std_kb: 64
+  samples_per_file: 2000
+  random_seed: 42
+
+trace:
+  n_steps: 100
+  batch_size: 4                # small batches for large 3D volumes
+  random_seed: 42
+  output_csv: "traces/unet3d_trace.csv"
+  output_bin: "traces/unet3d_trace.bin"
+
+compute:
+  preprocess_mean_ms: 55.0     # decompress + 3D crop + normalize
+  preprocess_std_ms: 8.0
+  distribution: gamma
+  n_workers: 16
+
+benchmark:
+  queue_depth: 64
+  o_direct: true
+  engines:
+    - pread
+    - libaio
+    - io_uring
+    - scissor
+  report_json: "results/unet3d_results.json"

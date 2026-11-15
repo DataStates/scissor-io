@@ -1,0 +1,14 @@
+# Python dependencies for the AE notebooks (ae/hacc/notebooks, ae/ai/notebooks).
+# Tested with Python 3.9 (supported range: 3.9-3.12).
+numpy==2.0.2
+pandas==2.3.3
+matplotlib==3.9.4
+SciencePlots==2.2.0
+seaborn==0.13.2
+scipy==1.13.1
+scikit-learn==1.6.1
+# notebook execution
+nbconvert==7.16.6
+nbclient==0.10.2
+ipykernel==6.31.0
+jupyterlab==4.5.1

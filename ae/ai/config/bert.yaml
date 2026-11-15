@@ -1,0 +1,37 @@
+# ============================================================
+# BERT / NLP workload configuration
+# ============================================================
+workload:
+  name: bert
+  description: "BERT-Large Wikipedia token training"
+
+dataset:
+  n_files: 8
+  file_size_gb: 2
+  sample_size_kb: 8            # pre-tokenized token sequences (~8 KB)
+  sample_size_std_kb: 1
+  samples_per_file: 50000
+  random_seed: 42
+
+trace:
+  n_steps: 200
+  batch_size: 256
+  random_seed: 42
+  output_csv: "traces/bert_trace.csv"
+  output_bin: "traces/bert_trace.bin"
+
+compute:
+  preprocess_mean_ms: 3.2      # MLM masking: very cheap
+  preprocess_std_ms: 0.5
+  distribution: normal
+  n_workers: 4
+
+benchmark:
+  queue_depth: 256
+  o_direct: true
+  engines:
+    - pread
+    - libaio
+    - io_uring
+    - scissor
+  report_json: "results/bert_results.json"

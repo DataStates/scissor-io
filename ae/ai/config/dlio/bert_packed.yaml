@@ -1,0 +1,58 @@
+# ============================================================
+# BERT-Large Pretraining: Packed Sequence (Megatron-LM style)
+# ============================================================
+#
+# Real workload reference:
+#   - MLPerf Training v3.0 BERT benchmark (Wikipedia + BooksCorpus)
+#   - Megatron-LM: "Efficient Large-Scale Language Model Training on GPU
+#     Clusters Using Megatron-LM", Narayanan et al., SC'21
+#
+# Data layout:
+#   Each sample is a packed sequence of 512 tokens × 16 bytes = 8 KB.
+#   Samples are stored sequentially in indexed_binary format, which is the
+#   native format of the Megatron-LM data pipeline.
+#
+# Access pattern: sequential shard (no within-shard shuffle):
+#   At scale, each GPU rank is assigned a contiguous shard of the dataset.
+#   Within that shard, samples are read in order (no per-step shuffle).
+#   The global shuffle happens offline at dataset creation time (document
+#   order is randomised once, and the index file encodes that permutation).
+#   This matches exactly how Megatron-LM reads data on Frontier / Summit.
+#
+#   Consequence: every training step reads batch_size × 8 KB = 2 MB of
+#   perfectly contiguous bytes from a single file.  SCISSOR coalesces the
+#   entire batch into one streaming IOP, while pread issues 256 separate 8 KB
+#   calls.  This is SCISSOR's strongest-advantage regime.
+#
+# DLIO parameters (passed to gen_dlio_dataset.py / gen_trace_dlio.py):
+model:
+  name: bert_packed
+
+dataset:
+  data_folder: data/dlio/bert_packed
+  format: indexed_binary
+  num_files_train: 32
+  num_samples_per_file: 2048
+  # 512 tokens × 16 bytes per token feature (token_id + segment + position + mask)
+  # record_dims gives DLIO an exact 1-D shape so it writes exactly 8192 B/sample
+  # (record_length_bytes would be sqrt-truncated to 90²=8100 B)
+  record_dims: [8192]
+
+reader:
+  batch_size: 256
+  # No within-shard shuffle: the per-rank shard is read sequentially.
+  # Global shuffle was applied at dataset creation (offline).
+  sample_shuffle: off
+  file_shuffle: off
+
+train:
+  epochs: 1
+  # BERT-Large A100 step time ~450 ms at batch=256 (MLPerf BERT benchmark)
+  computation_time: 0.450
+
+# Benchmark-specific settings (used by bench_dlio.py, not by DLIO itself)
+benchmark:
+  queue_depth: 256
+  o_direct: true
+  n_runs: 3
+  report_prefix: "results/dlio/bert_packed"

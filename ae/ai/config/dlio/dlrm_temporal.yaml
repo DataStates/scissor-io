@@ -1,0 +1,89 @@
+# ============================================================
+# DLRM / Criteo: Temporal Window + Within-Window Subsampling
+# ============================================================
+#
+# Real workload reference:
+#   - Meta DLRM-v2 / DCN-v2 on Criteo Terabyte (24 chronological days)
+#   - Temporal recency: industry practice uses last 7 to 14 of 24 days
+#     (29 to 58% of data), as concept drift makes older data less valuable.
+#   - Within-day subsampling: Slipstream (arXiv:2404.04270) shows
+#     top 6.8% of embedding entries cover 76% of accesses.
+#     ~30% of samples involve stale/hot embeddings → subsampled.
+#
+# Computation time, CPU data transformation only (not full training step):
+#   Operations per step (batch=512, 40 sparse int32 features + 13 dense):
+#     1. Sparse feature hashing: map raw Criteo category IDs → embedding
+#        table indices (26 sparse features × 512 rows = 13,312 mod-hash ops).
+#        At ~500M hash ops/s on modern CPU: ~0.03 ms.
+#     2. Dense feature normalization: log1p transform + clamp on
+#        512 rows × 13 features = 6,656 float ops, sub-millisecond.
+#   CPU time (data transformation only): 2 to 8 ms/step.
+#   The dominant cost in full CPU DLRM training is embedding table lookup
+#   (random DRAM accesses), which is 40 to 80 ms/step and is training compute,
+#   not data preprocessing.  We model only the data-transformation phase.
+#   We use 5 ms (center of 2 to 8 ms range).
+#   Sources:
+#     Kalamkar et al., "Optimizing Deep Learning Recommender Systems'
+#       Training on CPU," SC 2020, §4: measures pre-lookup feature
+#       hashing at ~5 to 10% of 40 to 80 ms total step ≈ 2 to 8 ms.
+#     Naumov et al., "Deep Learning Recommendation Model for
+#       Personalization and Recommendation Systems," arXiv:1906.00091 (2019).
+#   Note: the prior value (0.064 s) was derived from DLRM GPU step time,
+#     not CPU data transformation time.
+#
+# Data layout:
+#   Each record = 40 features × int32 = 160 bytes (real Criteo format).
+#   File is chronologically ordered: offset 0 = oldest, max offset = newest.
+#   temporal window selects records in the top 58% of the offset range.
+#
+# Selection: temporal_window:
+#   window_fraction=0.58  → last 58% of each file (last 14 of 24 days)
+#   within_keep_rate=0.30 → 30% subsampled within the window
+#   Effective keep rate: 0.58 × 0.30 ≈ 17.4%
+#
+#   Intra-window gap at 30% retention:
+#     160 B / 0.30 ≈ 533 bytes between selected records
+#   SCISSOR regressor target threshold: 1 to 4 KB
+#   Expected IOP reduction vs pread: ~25× (25 records per coalesced IOP)
+#
+#   Total file size: 512×65536×160 B = 5.12 GB
+#   Accessed offsets: 512×65536×0.174 ≈ 5,840,000  (>1M)  ✓
+#
+model:
+  name: dlrm_temporal
+
+dataset:
+  data_folder: data/dlio/dlrm_temporal
+  format: indexed_binary
+  num_files_train: 512
+  num_samples_per_file: 65536
+  # 40 features × int32 = 160 bytes, matches real Criteo binary record size
+  record_dims: [160]
+
+reader:
+  batch_size: 512
+  sample_shuffle: off      # temporal order preserved, selection applied post-trace
+  file_shuffle: off
+
+train:
+  epochs: 1
+  computation_time: 0.005   # CPU data transformation: sparse feature hashing + dense log-norm,
+                            # batch=512, range 2-8 ms (data-side only, pre-embedding-lookup).
+                            # Upper-bound used. Source: Kalamkar et al., SC 2020, §4
+                            # (hashing ~5-10% of 40-80 ms full CPU DLRM step ≈ 2-8 ms).
+
+# Post-DLIO trace selection
+selection:
+  mode: temporal_window
+  window_fraction: 0.58     # retain top 58% of offsets (last 14/24 days)
+  within_keep_rate: 0.30    # 30% subsampling inside the window
+  seed: 42
+  # Effective keep rate: 0.58 × 0.30 ≈ 17.4%
+  # Accessed offsets: 512×65536×0.174 ≈ 5,840,000  (>1M)
+  # Total file size:  512×65536×160 B = 5.12 GB
+
+benchmark:
+  queue_depth: 512
+  o_direct: true
+  n_runs: 3
+  report_prefix: "results/dlio/dlrm_temporal"

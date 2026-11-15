@@ -1,0 +1,38 @@
+# ============================================================
+# Small smoke-test workload: fast build/CI validation
+# Total dataset: 4 × 1 GB = 4 GB
+# ============================================================
+workload:
+  name: test_small
+  description: "Minimal workload for quick local testing"
+
+dataset:
+  n_files: 4                   # 4 files × 1 GB = 4 GB total
+  file_size_gb: 1
+  sample_size_kb: 150
+  sample_size_std_kb: 30
+  samples_per_file: 1250       # 1 GB / 150 KB ≈ 1250 samples / file
+  random_seed: 42
+
+trace:
+  n_steps: 20
+  batch_size: 64               # 20 steps × 64 requests = 1280 total IOs
+  random_seed: 42
+  output_csv: "traces/test_small_trace.csv"
+  output_bin: "traces/test_small_trace.bin"
+
+compute:
+  preprocess_mean_ms: 28.5
+  preprocess_std_ms: 4.2
+  distribution: normal
+  n_workers: 32
+
+benchmark:
+  queue_depth: 64
+  o_direct: true
+  engines:
+    - pread
+    - libaio
+    - io_uring
+    - scissor
+  report_json: "results/test_small_results.json"

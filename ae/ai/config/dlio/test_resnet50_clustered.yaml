@@ -1,0 +1,60 @@
+# ============================================================
+# ResNet-50 Clustered: MEDIUM TEST
+# ============================================================
+# Mirrors resnet50_clustered.yaml at reduced scale but with a dataset
+# large enough to exceed the available page-cache on a typical 16 GB
+# RAM workstation, ensuring IO is served from storage on every run.
+#
+# Key design constraints (all matching resnet50_clustered.yaml):
+#   record_dims, batch_size, computation_time, selection mode,
+#   n_clusters, intra_keep_rate, inter_keep_rate, and
+#   target_cluster_fraction are identical to the production config.
+#   Only num_files_train is reduced (128 → 16).
+#
+# Dataset size:
+#   16 files × 4,096 samples/file × 160 KB/sample = 10.24 GB
+#   Exceeds ~10 GB of available RAM on a 16 GB system.
+#
+# Selection (same as resnet50_clustered.yaml):
+#   16 files × 4,096 samples × 0.60 keep = ~39,322 selected offsets
+#   Rebatched at batch_size=128 → ~307 steps/epoch
+#   Intra-cluster gap: 160 KB / 0.60 ≈ 267 KB between retained samples
+#   At chunk_size=4 KB → gap ≈ 67 chunks.  Max regressor gap is 16
+#   (64 KB), so adjacent records are never merged, the same behavior as
+#   production.  This workload characterizes engines under large-record,
+#   gap-dominated access rather than SCISSOR coalescing.
+
+model:
+  name: test_resnet50_clustered
+
+dataset:
+  data_folder: data/dlio/test_resnet50_clustered
+  format: indexed_binary
+  num_files_train: 16            # 16×4096×160 KB = 10.24 GB, exceeds ~10 GB available RAM on a 16 GB system
+  num_samples_per_file: 4096     # same order of magnitude as production, keeps gap structure identical
+  record_dims: [163840]          # 160 KB/sample, identical to production
+
+reader:
+  batch_size: 128                # identical to resnet50_clustered.yaml
+  sample_shuffle: off
+  file_shuffle: off
+
+train:
+  epochs: 1
+  computation_time: 0.090        # identical to resnet50_clustered.yaml (90 ms V100 step)
+
+selection:
+  mode: clustered
+  n_clusters: 64                 # identical to resnet50_clustered.yaml
+  intra_keep_rate: 0.60          # identical to resnet50_clustered.yaml
+  inter_keep_rate: 0.60          # identical to resnet50_clustered.yaml
+  target_cluster_fraction: 1.0   # identical to resnet50_clustered.yaml
+  seed: 42
+  # Total: 16×4096 = 65,536 samples × 160 KB = 10.24 GB (exceeds page-cache)
+  # Accessed: ~39,322 offsets (60% keep) → ~307 rebatched steps
+
+benchmark:
+  queue_depth: 32768
+  o_direct: true
+  n_runs: 3
+  report_prefix: "results/dlio/test_resnet50_clustered"

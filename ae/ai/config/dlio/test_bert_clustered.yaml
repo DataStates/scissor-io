@@ -1,0 +1,59 @@
+# ============================================================
+# BERT Clustered: MEDIUM TEST
+# ============================================================
+# Mirrors bert_clustered.yaml at reduced scale but with a dataset
+# large enough to exceed the available page-cache on a typical
+# 16 GB RAM workstation, ensuring IO is served from storage rather
+# than cache on every run.
+#
+# Key design constraints (all matching bert_clustered.yaml):
+#   record_dims, batch_size, computation_time, selection mode,
+#   n_clusters, intra_keep_rate, inter_keep_rate, and
+#   target_cluster_fraction are identical to the production config.
+#   Only num_files_train and num_samples_per_file are reduced.
+#
+# Dataset size:
+#   256 files × 5,120 samples/file × 8 KB/sample = 10.49 GB
+#   Exceeds ~10 GB of available RAM on a 16 GB system, so no run
+#   benefits from warm page-cache.
+#
+# Selection (same as bert_clustered.yaml):
+#   256 files × 5,120 samples × 0.50 effective keep ≈ 655,360 selected
+#   Rebatched at batch_size=256 → ~2,560 steps/epoch
+#   Intra-cluster gap: 8 KB / 0.85 ≈ 9.4 KB between retained samples
+#   → gap=2 (8 KB) or gap=4 (16 KB) captures most merging opportunities
+
+model:
+  name: test_bert_clustered
+
+dataset:
+  data_folder: data/dlio/test_bert_clustered
+  format: indexed_binary
+  num_files_train: 256          # same as bert_clustered.yaml
+  num_samples_per_file: 5120    # reduced from 8192, total 10.49 GB
+  record_dims: [8192]           # 8 KB/sample, identical to production
+
+reader:
+  batch_size: 256               # identical to bert_clustered.yaml
+  sample_shuffle: off
+  file_shuffle: off
+
+train:
+  epochs: 1
+  computation_time: 0.005       # identical to bert_clustered.yaml (5 ms CPU dtype cast)
+
+selection:
+  mode: clustered
+  n_clusters: 8                 # identical to bert_clustered.yaml
+  intra_keep_rate: 0.85         # identical to bert_clustered.yaml
+  inter_keep_rate: 0.15         # identical to bert_clustered.yaml
+  target_cluster_fraction: 0.50 # identical to bert_clustered.yaml
+  seed: 42
+  # Total: 256×5120 = 1,310,720 samples × 8 KB = 10.49 GB
+  # Accessed: ~655,360 offsets (50% keep) → ~2,560 rebatched steps
+
+benchmark:
+  queue_depth: 64
+  o_direct: true
+  n_runs: 3
+  report_prefix: "results/dlio/test_bert_clustered"

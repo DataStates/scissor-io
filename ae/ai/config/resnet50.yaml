@@ -1,0 +1,40 @@
+# ============================================================
+# ResNet-50 / ImageNet workload configuration
+# ============================================================
+workload:
+  name: resnet50
+  description: "ImageNet JPEG training: ResNet-50 regime"
+
+dataset:
+  n_files: 16                  # number of data files to create
+  file_size_gb: 4              # size of each file in GB
+  sample_size_kb: 150          # average sample size in KB (JPEG ~150 KB)
+  sample_size_std_kb: 30       # std dev of sample size (variable JPEG sizes)
+  samples_per_file: 5000       # number of logical samples embedded per file
+  random_seed: 42
+
+trace:
+  n_steps: 200                 # number of training steps to simulate
+  batch_size: 512              # IO requests (samples) per step
+  random_seed: 42
+  output_csv: "traces/resnet50_trace.csv"
+  output_bin: "traces/resnet50_trace.bin"
+
+compute:
+  # CPU preprocessing: decode + augment + normalize
+  # Source: arxiv measured ~14.26 ms/sample on 1 core
+  # With 32 workers: (14.26 * 512) / 32 = ~228 ms total wall time
+  preprocess_mean_ms: 28.5     # wall-clock ms per step (32 workers)
+  preprocess_std_ms: 4.2
+  distribution: normal         # normal | gamma | uniform
+  n_workers: 32                # parallel preprocessing threads
+
+benchmark:
+  queue_depth: 512             # max inflight IO requests
+  o_direct: true               # bypass page cache
+  engines:                     # engines to run
+    - pread
+    - libaio
+    - io_uring
+    - scissor
+  report_json: "results/resnet50_results.json"

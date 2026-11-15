@@ -1,0 +1,57 @@
+# ============================================================
+# DLRM Recommendation Model: Random Embedding Access (Baseline)
+# ============================================================
+#
+# Real workload reference:
+#   - Meta DLRM-v2 / DCN-v2 on Criteo-Terabyte dataset
+#   - MLPerf Training v3.0 DLRM-DCNv2 benchmark
+#   - "Deep Learning Recommendation Model for Personalization and
+#     Recommendation Systems", Naumov et al., arXiv 2019
+#
+# Data layout:
+#   Each sample encodes sparse categorical feature indices and dense features
+#   for one training example.  On disk these are stored as fixed-size records
+#   (sparse features mapped to embedding row offsets) in indexed_binary format.
+#   We use 64 KB per sample as a representative size.
+#
+# Access pattern: random (i.i.d. per step):
+#   Recommendation model training requires random access because:
+#   (a) Embedding table lookups are inherently non-local: each user's feature
+#       vector is unrelated to adjacent users in storage order.
+#   (b) MLPerf DLRM specifies sample_shuffle=random to prevent the model from
+#       memorising temporal ordering artifacts in click-stream data.
+#
+#   Consequence: each batch samples uniformly at random from all files.
+#   There is no spatial locality: adjacent batch samples are at random
+#   positions in random files.  SCISSOR cannot coalesce them without reading
+#   enormous amounts of wasted data.  This workload serves as the
+#   worst-case baseline where all engines should perform comparably.
+#
+model:
+  name: dlrm_random
+
+dataset:
+  data_folder: data/dlio/dlrm_random
+  format: indexed_binary
+  num_files_train: 8
+  num_samples_per_file: 1024
+  # Sparse + dense features per sample, packed as fixed-size binary record
+  # 256² = 65536 B, record_dims used for exact size (sqrt gives the same here)
+  record_dims: [65536]
+
+reader:
+  batch_size: 128
+  # Random shuffle required by DLRM training protocol
+  sample_shuffle: random
+  file_shuffle: off
+
+train:
+  epochs: 1
+  # DLRM-DCNv2 step time at batch=128 (MLPerf reference: ~64 ms)
+  computation_time: 0.064
+
+benchmark:
+  queue_depth: 128
+  o_direct: true
+  n_runs: 3
+  report_prefix: "results/dlio/dlrm_random"

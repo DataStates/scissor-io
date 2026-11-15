@@ -115,11 +115,12 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 pip install --no-deps "dlio_benchmark @ git+https://github.com/argonne-lcf/dlio_benchmark.git@8b280cb3562e2c3e250d406d1f4ce1680aa9b88d"
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-DLIO ([argonne-lcf/dlio_benchmark](https://github.com/argonne-lcf/dlio_benchmark),
-commit `8b280cb`) is only used to generate the `indexed_binary` datasets. Its
-framework dependencies (PyTorch, TensorFlow, DALI) are not needed.  Check:
+DLIO ([argonne-lcf/dlio_benchmark](https://github.com/argonne-lcf/dlio_benchmark))
+is only used to generate the `indexed_binary` datasets. It
+imports PyTorch (the CPU build is enough), not TensorFlow or DALI.  Check:
 
 ```bash
 python3 -c "from dlio_benchmark.data_generator.indexed_binary_generator import IndexedBinaryGenerator; print('DLIO OK')"

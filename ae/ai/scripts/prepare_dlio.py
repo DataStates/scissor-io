@@ -101,6 +101,9 @@ def phase_generate(workload: str, cfg: dict, data_root: str,
         f"++workload.dataset.num_samples_per_file={ds['num_samples_per_file']}",
         _record_dims_arg(cfg),
         f"++workload.reader.batch_size={reader.get('batch_size', 1)}",
+        # DLIO converts each generation buffer to Python integers (about 80 B
+        # of memory per byte), so the 2 GB default exhausts memory for large files
+        "++workload.dataset.generation_buffer_size=16777216",
     ]
     if not run_cmd(cmd, label=f"dlio_benchmark generate {workload}"):
         print(f"  [SKIP] {workload}: DLIO data generation failed", file=sys.stderr)

@@ -18,9 +18,10 @@
 // MmapReader.
 //
 // Errors: constructors throw std::system_error when the ring,
-// file or mapping cannot be set up.  wait_all() returns the
-// negative errno of the first failed read since the previous
-// wait_all(), 0 otherwise.
+// file or mapping cannot be set up.  wait(id) returns the
+// negative errno of that segment's failed read, 0 otherwise.
+// wait_all() returns the negative errno of the first failed
+// read since the previous wait_all(), 0 otherwise.
 // ======================================================
 
 #include <scissor/io_reader.hpp>
@@ -36,6 +37,7 @@
 #include <queue>
 #include <string>
 #include <sys/types.h>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -51,6 +53,7 @@ class LiburingReader : public IReader {
   io_uring ring;
   struct io_uring_params ring_params{};
   int first_error = 0; // negative errno of the first failed read since the last wait_all()
+  std::unordered_map<size_t, int> failed; // negative errno of failed ids not yet waited for
 
   uint32_t request_completion();
   uint32_t submit_more();
@@ -76,6 +79,7 @@ class PosixReader : public IReader {
   std::string fname;
   std::vector<Segment> reads;
   std::vector<bool> segment_status;
+  std::vector<int> segment_error; // negative errno of each segment's read, 0 on success
   std::vector<std::future<int>> futures;
   size_t completed_count=0, submitted_count=0;
   std::mutex status_mutex;

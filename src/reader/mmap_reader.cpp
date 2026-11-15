@@ -85,7 +85,8 @@ int MmapReader::enqueue_reads(const std::vector<Segment>& segments) {
                 it = mappings.emplace(key, std::make_pair(static_cast<uint8_t*>(mapped), fs)).first;
             }
             base = it->second.first;
-            len  = it->second.second;
+            // The file may have been truncated since it was mapped
+            len  = std::min(it->second.second, static_cast<size_t>(st.st_size));
         }
         if (seg.offset + seg.size > len)
             seg.size = (len > seg.offset) ? len - seg.offset : 0;

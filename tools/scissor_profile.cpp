@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <unistd.h>
@@ -28,12 +29,15 @@
 //
 // Calibrate mode (--calibrate):
 //   Sweeps a 2D grid of (chunk_size x n_iops), measures
-//   throughput at each point using direct pread I/O,
-//   writes a CSV for downstream fitting by scissor_fit.py.
+//   throughput at each point using direct pread I/O, or, with
+//   --file2, io_uring reads of the same offsets of both files
+//   (the throughput then counts both files), and writes a CSV
+//   for downstream fitting by scissor_fit.py.
 //
 // Usage:
 //   scissor-profile --storage {pfs|ssd|hybrid}
 //                   --file <path>
+//                   [--file2 <path>]
 //                   [--size-gb <N>]
 //                   [--output <path>]
 //                   [--calibrate]
@@ -47,6 +51,7 @@
 struct Args {
     std::string storage     = "pfs";
     std::string file;
+    std::string file2;
     double      size_gb     = 1.0;
     std::string output      = "models.conf";
     bool        calibrate   = false;
@@ -59,6 +64,8 @@ static void print_usage(const char* prog) {
         << "Usage: " << prog << "\n"
         << "  --storage    {pfs|ssd|hybrid}  Storage tier to profile (default: pfs)\n"
         << "  --file       <path>            File to benchmark reads against\n"
+        << "  --file2      <path>            Calibrate mode: read the same offsets of --file and this\n"
+        << "                                 file through io_uring (default: pread of --file only)\n"
         << "  --size-gb    <N>               GB of data to read per run (default: 1.0)\n"
         << "  --output     <path>            Output models.conf path (default: models.conf)\n"
         << "  --calibrate                    Enable calibrate mode (2D grid sweep + CSV)\n"
@@ -74,6 +81,8 @@ static Args parse_args(int argc, char* argv[]) {
             args.storage = argv[++i];
         } else if ((arg == "--file" || arg == "-f") && i + 1 < argc) {
             args.file = argv[++i];
+        } else if (arg == "--file2" && i + 1 < argc) {
+            args.file2 = argv[++i];
         } else if ((arg == "--size-gb" || arg == "-n") && i + 1 < argc) {
             args.size_gb = std::stod(argv[++i]);
         } else if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
@@ -140,6 +149,28 @@ static double measure_throughput_quick(const std::string& file_path,
 }
 
 // ======================================================
+// random_offsets: n_iops random offsets aligned to chunk_size
+// in [0, file_size - chunk_size].
+// ======================================================
+static std::vector<off_t> random_offsets(size_t chunk_size, size_t n_iops,
+                                         size_t file_size, int seed) {
+    size_t max_offset = file_size - chunk_size;
+    // Number of aligned positions.
+    size_t n_positions = max_offset / chunk_size + 1;
+
+    std::vector<off_t> offsets(n_iops);
+    // Simple LCG seeded by the given seed.
+    uint64_t rng_state = static_cast<uint64_t>(seed);
+    for (size_t i = 0; i < n_iops; ++i) {
+        // LCG parameters from Numerical Recipes.
+        rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL;
+        size_t idx = static_cast<size_t>(rng_state >> 33) % n_positions;
+        offsets[i] = static_cast<off_t>(idx * chunk_size);
+    }
+    return offsets;
+}
+
+// ======================================================
 // Calibrate-mode: one trial of (chunk_size, n_iops) using
 // direct pread with random offsets. Returns throughput in GiB/s
 // and elapsed_s via output parameter.
@@ -168,20 +199,7 @@ static double measure_throughput_calibrate(const std::string& file_path,
         exit(1);
     }
 
-    // Generate n_iops random offsets aligned to chunk_size in [0, file_size - chunk_size].
-    size_t max_offset = file_size - chunk_size;
-    // Number of aligned positions.
-    size_t n_positions = max_offset / chunk_size + 1;
-
-    std::vector<off_t> offsets(n_iops);
-    // Simple LCG seeded by the given seed.
-    uint64_t rng_state = static_cast<uint64_t>(seed);
-    for (size_t i = 0; i < n_iops; ++i) {
-        // LCG parameters from Numerical Recipes.
-        rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL;
-        size_t idx = static_cast<size_t>(rng_state >> 33) % n_positions;
-        offsets[i] = static_cast<off_t>(idx * chunk_size);
-    }
+    std::vector<off_t> offsets = random_offsets(chunk_size, n_iops, file_size, seed);
 
     // Time the full batch of pread calls.
     struct timespec ts_start, ts_end;
@@ -203,6 +221,71 @@ static double measure_throughput_calibrate(const std::string& file_path,
 
     double bytes_read = static_cast<double>(n_iops) * static_cast<double>(chunk_size);
     double gib_read   = bytes_read / (1024.0 * 1024.0 * 1024.0);
+    return (elapsed_s > 0.0) ? gib_read / elapsed_s : 0.0;
+}
+
+// ======================================================
+// Calibrate-mode, two files: one trial of (chunk_size, n_iops)
+// reading the same random offsets of both files through one
+// io_uring, the two reads of an offset submitted one after the
+// other. Returns the throughput of both files in GiB/s and
+// elapsed_s via output parameter.
+// ======================================================
+static double measure_throughput_calibrate_uring(scissor::LiburingReader& reader,
+                                                 const std::string& file0,
+                                                 const std::string& file1,
+                                                 size_t chunk_size,
+                                                 size_t n_iops,
+                                                 size_t file_size,
+                                                 int seed,
+                                                 double& elapsed_s_out) {
+    const std::string paths[2] = {file0, file1};
+    int   fds[2]  = {-1, -1};
+    void* bufs[2] = {nullptr, nullptr};
+    size_t total  = n_iops * chunk_size;
+    for (size_t f = 0; f < 2; ++f) {
+        // Open with O_DIRECT, and fall back without it if that fails.
+        fds[f] = open(paths[f].c_str(), O_RDONLY | O_DIRECT);
+        if (fds[f] < 0)
+            fds[f] = open(paths[f].c_str(), O_RDONLY);
+        if (fds[f] < 0) {
+            std::cerr << "Cannot open file: " << paths[f] << "\n";
+            exit(1);
+        }
+        if (posix_memalign(&bufs[f], 4096, total) != 0) {
+            std::cerr << "posix_memalign failed for " << total << " bytes\n";
+            exit(1);
+        }
+    }
+
+    std::vector<off_t> offsets = random_offsets(chunk_size, n_iops, file_size, seed);
+    std::vector<scissor::Segment> segments(2 * n_iops);
+    for (size_t i = 0; i < n_iops; ++i) {
+        for (size_t f = 0; f < 2; ++f) {
+            segments[2 * i + f] = {2 * i + f, static_cast<size_t>(offsets[i]), chunk_size,
+                                   fds[f], static_cast<uint8_t*>(bufs[f]) + i * chunk_size};
+        }
+    }
+
+    struct timespec ts_start, ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+
+    reader.enqueue_reads(segments);
+    if (reader.wait_all() != 0)
+        std::cerr << "Read errors at chunk_size=" << chunk_size << ", n_iops=" << n_iops << "\n";
+
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+
+    double elapsed_s = (ts_end.tv_sec - ts_start.tv_sec)
+                     + (ts_end.tv_nsec - ts_start.tv_nsec) * 1e-9;
+    elapsed_s_out = elapsed_s;
+
+    for (size_t f = 0; f < 2; ++f) {
+        free(bufs[f]);
+        close(fds[f]);
+    }
+
+    double gib_read = 2.0 * static_cast<double>(total) / (1024.0 * 1024.0 * 1024.0);
     return (elapsed_s > 0.0) ? gib_read / elapsed_s : 0.0;
 }
 
@@ -312,11 +395,18 @@ static int run_calibrate_mode(const Args& args) {
     std::cout << "scissor-profile (calibrate mode)\n"
               << "  storage    : " << args.storage    << "\n"
               << "  file       : " << args.file       << "\n"
+              << "  file2      : " << (args.file2.empty() ? "(pread of file)" : args.file2) << "\n"
               << "  size-gb    : " << args.size_gb    << "\n"
               << "  reps       : " << args.n_reps     << "\n"
               << "  csv-output : " << args.csv_output << "\n\n";
 
     size_t file_size = get_file_size_bytes(args.file);
+    // Two-file mode: offsets must fit in both files, one ring for all trials
+    std::unique_ptr<scissor::LiburingReader> reader;
+    if (!args.file2.empty()) {
+        file_size = std::min(file_size, get_file_size_bytes(args.file2));
+        reader = std::make_unique<scissor::LiburingReader>();
+    }
     size_t size_limit = static_cast<size_t>(args.size_gb * 1024.0 * 1024.0 * 1024.0);
     size_t effective_limit = std::min(size_limit, file_size);
 
@@ -363,9 +453,13 @@ static int run_calibrate_mode(const Args& args) {
 
             for (int rep = 0; rep < args.n_reps; ++rep) {
                 double elapsed_s = 0.0;
-                double tput = measure_throughput_calibrate(
-                    args.file, chunk_size, n_iops, file_size,
-                    42 + rep, elapsed_s);
+                double tput = reader
+                    ? measure_throughput_calibrate_uring(
+                          *reader, args.file, args.file2, chunk_size, n_iops,
+                          file_size, 42 + rep, elapsed_s)
+                    : measure_throughput_calibrate(
+                          args.file, chunk_size, n_iops, file_size,
+                          42 + rep, elapsed_s);
                 throughputs.push_back(tput);
                 elapsed_times.push_back(elapsed_s);
             }

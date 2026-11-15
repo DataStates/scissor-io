@@ -17,11 +17,11 @@ using namespace scissor;
 
 // ======================================================
 // Test 1: no config file present -> built-in defaults loaded.
-// (SCISSOR_DEFAULT_CONFIG_DIR points to nonexistent path,
-//  HOME/.scissor/models.conf absent,
-//  SCISSOR_MODEL_CONFIG unset.)
-// The Regressor must construct without error and return
-// sane defaults.
+// (HOME/.scissor/models.conf absent and SCISSOR_MODEL_CONFIG
+//  unset by the test environment. An installed models.conf
+//  holds the same values.)
+// The Regressor must construct without error and return the
+// pick of the built-in coefficients.
 // ======================================================
 static void test_builtin_defaults() {
     // Unset env vars that might pick up a real config
@@ -34,8 +34,8 @@ static void test_builtin_defaults() {
     std::iota(offsets.begin(), offsets.end(), 0);
     auto [gap, batch] = reg.optimize(offsets, 4096, 4);
 
-    assert(gap  >= 0   && "gap must be >= 0");
-    assert(batch > 0   && "batch_size must be > 0");
+    // Contiguous offsets: the built-in PFS model picks gap 1, 1 MiB batches
+    assert(gap == 1 && batch == (size_t(1) << 20) && "built-in PFS pick changed");
 
     std::cout << "[PASS] test_builtin_defaults  (gap=" << gap
               << ", batch_mb=" << (batch >> 20) << ")\n";
@@ -73,8 +73,8 @@ static void test_config_file_loading() {
     std::iota(offsets.begin(), offsets.end(), 0);
     auto [gap, batch] = reg.optimize(offsets, 4096, 4);
 
-    assert(gap  >= 0 && "gap must be >= 0 with custom config");
-    assert(batch > 0 && "batch_size must be > 0 with custom config");
+    // The custom coefficients and gap set {0, 2, 4} give gap 0, 1 MiB batches
+    assert(gap == 0 && batch == (size_t(1) << 20) && "custom config pick changed");
 
     unsetenv("SCISSOR_MODEL_CONFIG");
     remove(tmppath.c_str());
@@ -101,10 +101,9 @@ static void test_programmatic_override() {
     std::iota(offsets.begin(), offsets.end(), 0);
     auto [gap, batch] = reg.optimize(offsets, 4096, 2);
 
-    // The gaps candidate set is {0, 4, 8} so best_gap must be one of those
-    assert((gap == 0 || gap == 4 || gap == 8) &&
-           "best_gap must come from the programmatic gaps set");
-    assert(batch > 0 && "batch_size must be > 0");
+    // The gaps come from the programmatic set {0, 4, 8}
+    assert(gap == 0 && batch == (size_t(1) << 20) &&
+           "programmatic gaps {0, 4, 8} must give gap 0, 1 MiB batches");
 
     std::cout << "[PASS] test_programmatic_override  (gap=" << gap
               << ", batch_mb=" << (batch >> 20) << ")\n";
@@ -125,8 +124,8 @@ static void test_optimize_scattered() {
 
     auto [gap, batch] = reg.optimize(offsets, 4096, 8);
 
-    assert(gap  >= 0 && "gap must be non-negative");
-    assert(batch > 0 && "batch_size must be positive");
+    // Every 8th chunk: gap 8 merges all offsets into contiguous reads
+    assert(gap == 8 && batch == (size_t(1) << 20) && "built-in hybrid pick changed");
 
     std::cout << "[PASS] test_optimize_scattered  (gap=" << gap
               << ", batch_mb=" << (batch >> 20) << ")\n";

@@ -67,8 +67,9 @@ distributed. In the logs, the `File` column is relative to the HACC directory
 
 ## Rerunning experiments
 
-The job scripts in `scripts/` run `eval_statediff` from the `scissor-io` branch
-of [state-diff](https://github.com/DataStates/state-diff/tree/scissor-io), built
+The job scripts in `scripts/` run `eval_statediff` and the benchmarks of the
+`scissor-io` branch of
+[state-diff](https://github.com/DataStates/state-diff/tree/scissor-io), built
 against scissor-io (see the state-diff README). They
 write CSV logs in the layout of `data/` under `$OUT_DIR` (default `./logs`), so
 the notebooks can read them by pointing their data directories there.
@@ -79,6 +80,9 @@ the notebooks can read them by pointing their data directories there.
 | `scripts/breakdown.sh` | Coalescing gap × batch size, Regressor vs. exhaustive search | `EXP_ID`, `TYPE`, `CSIZE` |
 | `scripts/qdepth.sh` | Submission and completion queue depth | `ENGINE=scissor\|iouring`, `EXP_ID`, `TYPE` |
 | `scripts/scalability.sh` | Weak scaling (2 ranks per node) | `NNODES`, `EXP_ID` |
+| `scripts/read_bench.sh` | Read throughput vs. number of IOPs (`SWEEP=io`), I/O model calibration points (`SWEEP=calib`) | `SWEEP`, `EXP_ID`, `TYPE=pfs\|ssd\|hyb`, `NREPS` |
+| `scripts/compute_bench.sh` | Compute-kernel timings vs. work size and thread count | `THREADS`, `NREPS`, `MAX_CHUNKS` |
+| `scripts/offsets.sh` | Offsets of the chunks flagged by the tree comparison, per chunk size and error margin | `EXP_ID`, `TYPE` |
 
 All scripts read `scripts/common.sh`, which takes the site settings from the
 environment: `HACC_DIR` (one directory per simulation, each with `run1/` and
@@ -130,6 +134,9 @@ done
 CSIZE=1 bash breakdown.sh
 ENGINE=scissor bash qdepth.sh
 ENGINE=iouring bash qdepth.sh
+bash offsets.sh
+NREPS=1 CALIB_SIZES="16777216 33554432" SWEEP=calib TYPE=pfs bash read_bench.sh
+NREPS=1 THREADS=2 MAX_CHUNKS=1024 bash compute_bench.sh
 ```
 
 `scalability.sh` with `NNODES` nodes reads the checkpoints of simulation ranks

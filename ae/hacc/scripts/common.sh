@@ -2,14 +2,16 @@
 # ========================================================================
 # common.sh -- settings and helpers shared by the HACC job scripts.
 #
-# Sourced by e2e.sh, breakdown.sh, qdepth.sh and scalability.sh.  All
-# site-specific values come from the environment:
+# Sourced by e2e.sh, breakdown.sh, qdepth.sh, scalability.sh, offsets.sh,
+# read_bench.sh and compute_bench.sh.  All site-specific values come from
+# the environment:
 #
-#   HACC_DIR         (required) directory holding one sub-directory per
-#                    simulation (e.g. np1000-01bil), each with run1/ and
-#                    run2/ containing m000p.mpirestart-combined-*.dat
+#   HACC_DIR         (required by all but compute_bench.sh) directory holding
+#                    one sub-directory per simulation (e.g. np1000-01bil),
+#                    each with run1/ and run2/ containing
+#                    m000p.mpirestart-combined-*.dat
 #   STATEDIFF_BUILD  (required) state-diff build directory holding
-#                    scripts/eval_statediff
+#                    scripts/eval_statediff, bench_load and bench_compute
 #   OUT_DIR          directory for the CSV logs (default: ./logs). The
 #                    layout matches ae/hacc/data
 #   VMTOUCH_DIR      directory holding the vmtouch binary used to evict
@@ -28,7 +30,6 @@ if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
     cd ${PBS_O_WORKDIR}
 fi
 
-: "${HACC_DIR:?set HACC_DIR to the directory holding the HACC simulations}"
 : "${STATEDIFF_BUILD:?set STATEDIFF_BUILD to the state-diff build directory}"
 OUT_DIR=${OUT_DIR:-logs}
 
@@ -70,6 +71,7 @@ stage_to_local_scratch() {
 set_run_dirs() {
     local exp_id="$1"
     local type="$2"
+    : "${HACC_DIR:?set HACC_DIR to the directory holding the HACC simulations}"
     if [[ $type == "ssd" ]]; then
         : "${SCRATCH_DIR:?set SCRATCH_DIR for TYPE=ssd}"
         run0_dir="${SCRATCH_DIR}/$exp_id/run1"

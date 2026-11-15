@@ -39,6 +39,7 @@ int PosixReader::read_data(size_t beg, size_t end) {
     for (size_t i = beg; i < end; i++) {
         Segment& seg = reads[i];
         size_t len = 0;
+        int seg_error = 0;
 
         // A read reaching the end of the file stops the segment there, as
         // with io_uring. Sizes are left unclamped so that O_DIRECT file
@@ -59,6 +60,7 @@ int PosixReader::read_data(size_t beg, size_t end) {
                               "file_offset", seg.offset + len,
                               "error",       std::strerror(err),
                               "errno",       err);
+                seg_error = -err;
                 int expected = 0;
                 first_error.compare_exchange_strong(expected, -err);
                 break;
@@ -68,6 +70,7 @@ int PosixReader::read_data(size_t beg, size_t end) {
         }
 
         status_mutex.lock();
+        segment_error[i] = seg_error;
         segment_status[i] = true;
         status_mutex.unlock();
     }
@@ -87,6 +90,7 @@ int PosixReader::enqueue_reads(const std::vector<Segment>& segments) {
     }
     status_mutex.lock();
     segment_status.insert(segment_status.end(), resolved.size(), false);
+    segment_error.insert(segment_error.end(), resolved.size(), 0);
     status_mutex.unlock();
     reads.insert(reads.end(), resolved.begin(), resolved.end());
     SCISSOR_TIMER_PERF(enqueue, "Enqueue segments",
@@ -123,9 +127,10 @@ int PosixReader::wait(size_t id) {
     }
     status_mutex.lock();
     segment_status[pos] = false;
+    int err = segment_error[pos];
     status_mutex.unlock();
     completed_count++;
-    return 0;
+    return err;
 }
 
 int PosixReader::wait_all() {
@@ -137,6 +142,7 @@ int PosixReader::wait_all() {
     reads.clear();
     status_mutex.lock();
     segment_status.clear();
+    segment_error.clear();
     status_mutex.unlock();
     return first_error.exchange(0);
 }

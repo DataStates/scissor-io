@@ -162,7 +162,8 @@ gaps      = 0, 1, 2, 4, 8, 16
 
 `scissor-profile` measures I/O throughput on a target file and writes a
 `models.conf`, and `scissor_fit.py` fits the model coefficients from a profile CSV.
-Run either with `--help` for options.
+In calibrate mode, `--file2 <path>` reads the same offsets of both files through
+io_uring. Run either with `--help` for options.
 
 ## Logging
 

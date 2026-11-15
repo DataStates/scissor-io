@@ -90,11 +90,12 @@ uint32_t LiburingReader::request_completion() {
     uint32_t head;
     struct io_uring_cqe* cqe_ptr;
     io_uring_for_each_cqe(&ring, head, cqe_ptr) {
+        size_t id = io_uring_cqe_get_data64(cqe_ptr);
         if (cqe_ptr->res < 0) {
             fprintf(stderr, "read error: %s\n", strerror(-cqe_ptr->res));
             if (first_error == 0) first_error = cqe_ptr->res;
+            failed[id] = cqe_ptr->res;
         }
-        size_t id = io_uring_cqe_get_data64(cqe_ptr);
         completions.insert(id);
         nready += 1;
     }
@@ -136,7 +137,12 @@ int LiburingReader::wait(size_t id) {
     }
     completions.erase(id);
     req_consumed += 1;
-    return 0;
+    auto it = failed.find(id);
+    if (it == failed.end())
+        return 0;
+    int err = it->second;
+    failed.erase(it);
+    return err;
 }
 
 std::vector<size_t> LiburingReader::wait_n(size_t n) {
@@ -226,6 +232,7 @@ int LiburingReader::wait_all() {
     SCISSOR_TIMER_PERF(wait_loop, "Loop submit and complete",
                        "total_submitted", req_submitted);
     completions.clear();
+    failed.clear();
     req_consumed = req_submitted;
 
     int err = first_error;

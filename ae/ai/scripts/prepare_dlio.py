@@ -53,6 +53,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 # Local shared module
@@ -69,6 +70,18 @@ from _dlio_common import (
 
 # ── Phase 1: Data generation ──────────────────────────────────────────────────
 
+def fix_index_offsets(outdir: str, num_files: int) -> None:
+    """
+    DLIO restarts the offsets at 0 for every generation buffer it writes, so
+    rebuild each .off.idx from the sample sizes in the matching .sz.idx.
+    """
+    for data_file in _discover_train_files(outdir, num_files):
+        sizes = np.fromfile(data_file + ".sz.idx", dtype=np.uint64)
+        offsets = np.zeros_like(sizes)
+        np.cumsum(sizes[:-1], out=offsets[1:])
+        offsets.tofile(data_file + ".off.idx")
+
+
 def phase_generate(workload: str, cfg: dict, data_root: str,
                    dlio_bin: str, dlio_config_path: Path) -> bool:
     """
@@ -82,6 +95,7 @@ def phase_generate(workload: str, cfg: dict, data_root: str,
     existing = _discover_train_files(outdir, ds["num_files_train"])
     if len(existing) == ds["num_files_train"]:
         print(f"\n[generate] {workload}: {len(existing)} files already exist, skipping")
+        fix_index_offsets(outdir, ds["num_files_train"])
         write_manifest(outdir, ds["num_files_train"])
         return True
 
@@ -109,6 +123,7 @@ def phase_generate(workload: str, cfg: dict, data_root: str,
         print(f"  [SKIP] {workload}: DLIO data generation failed", file=sys.stderr)
         return False
 
+    fix_index_offsets(outdir, ds["num_files_train"])
     write_manifest(outdir, ds["num_files_train"])
     return True
 
